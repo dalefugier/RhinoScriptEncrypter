@@ -20,25 +20,13 @@ namespace RhinoScriptEncrypter
   [System.Runtime.InteropServices.Guid("1da690e6-7e5c-4949-9c03-b9cafb333144")]
   public class RhinoScriptEncrypterCommand : Command
   {
-    /// <summary>
-    /// The one and only instance of this command
-    /// </summary>
-    static RhinoScriptEncrypterCommand _instance;
+    int _optionIndex = 0;
 
     /// <summary>
     /// Public constructor
     /// </summary>
     public RhinoScriptEncrypterCommand()
     {
-      _instance = this;
-    }
-
-    /// <summary>
-    /// Returns the one and only instance of this command
-    /// </summary>
-    public static RhinoScriptEncrypterCommand Instance
-    {
-      get { return _instance; }
     }
 
     /// <summary>
@@ -54,9 +42,9 @@ namespace RhinoScriptEncrypter
     /// </summary>
     protected override Result RunCommand(RhinoDoc doc, RunMode mode)
     {
-      string fileName = string.Empty;
+      string rhinoScriptFile = string.Empty;
 
-      // Prompt or a filename
+      // Prompt for a filename
       if (mode == RunMode.Interactive)
       {
         OpenFileDialog openFileDialog = new OpenFileDialog();
@@ -65,24 +53,24 @@ namespace RhinoScriptEncrypter
         if (openFileDialog.ShowDialog() != DialogResult.OK)
           return Result.Cancel;
 
-        fileName = openFileDialog.FileName;
+        rhinoScriptFile = openFileDialog.FileName;
       }
       else
       {
-        Result rc = Rhino.Input.RhinoGet.GetString("RhinoScript file to encrypt", false, ref fileName);
-        if (rc != Rhino.Commands.Result.Success)
+        Result rc = GetOpenFileName("RhinoScript file to encrypt", ref rhinoScriptFile);
+        if (rc != Result.Success)
           return rc;
       }
 
       // Verify the filename
-      fileName = fileName.Trim();
-      if (string.IsNullOrEmpty(fileName))
+      rhinoScriptFile = rhinoScriptFile.Trim();
+      if (string.IsNullOrEmpty(rhinoScriptFile))
         return Result.Nothing;
 
-      // Verify the file
-      if (!File.Exists(fileName))
+      // Verify the file exists
+      if (!File.Exists(rhinoScriptFile))
       {
-        string error = string.Format("RhinoScript file not found - {0}\n", fileName);
+        string error = string.Format("RhinoScript file not found - {0}\n", rhinoScriptFile);
         if (mode == RunMode.Interactive)
           MessageBox.Show(error, EnglishName, MessageBoxButtons.OK, MessageBoxIcon.Error);
         else
@@ -93,21 +81,21 @@ namespace RhinoScriptEncrypter
       // Generate an encryption password
       string encryptPassword = Guid.NewGuid().ToString();
 
-      // Do the encryption
+      // Do the file encryption
       string encryptedFileName = string.Empty;
       try
       {
         // Read the script
-        string clearString = File.ReadAllText(fileName);
+        string clearString = File.ReadAllText(rhinoScriptFile);
         // Encrypt the script
         string encryptedString = Encrypt(clearString, encryptPassword);
         // Write the encrypted script
-        encryptedFileName = Path.ChangeExtension(fileName, ".rvbx");
+        encryptedFileName = Path.ChangeExtension(rhinoScriptFile, ".rvbx");
         File.WriteAllText(encryptedFileName, encryptedString);
       }
       catch (Exception ex)
       {
-        string error = string.Format("Error encrypting RhinoScript file - {0}\n{1}\n", fileName, ex.Message);
+        string error = string.Format("Error encrypting RhinoScript file - {0}\n{1}\n", rhinoScriptFile, ex.Message);
         if (mode == RunMode.Interactive)
           MessageBox.Show(error, EnglishName, MessageBoxButtons.OK, MessageBoxIcon.Error);
         else
@@ -116,17 +104,154 @@ namespace RhinoScriptEncrypter
       }
 
       // Report the results
-      string output = "RhinoScript file encryption successful!\n";
-      output += string.Format("  Input filename: {0}\n", fileName);
-      output += string.Format("  Output filename: {0}\n", encryptedFileName);
-      output += string.Format("  Decrypt password: {0}\n", encryptPassword);
+      string outputString = "RhinoScript file encryption successful!\n";
+      outputString += string.Format("  Input filename: {0}\n", rhinoScriptFile);
+      outputString += string.Format("  Output filename: {0}\n", encryptedFileName);
+      outputString += string.Format("  Decrypt password: {0}\n", encryptPassword);
 
       if (mode == RunMode.Interactive)
-        Rhino.UI.Dialogs.ShowTextDialog(output, EnglishName);
+        Rhino.UI.Dialogs.ShowTextDialog(outputString, EnglishName);
       else
-        RhinoApp.WriteLine(output);
+      {
+        string[] values = new string[] { "HistoryWindow", "File", "Clipboard", "Dialog" };
+
+        GetOption go = new GetOption();
+        go.SetCommandPrompt(string.Format("Text destination <{0}>", values[_optionIndex]));
+        go.AcceptNothing(true);
+        go.AddOption(new Rhino.UI.LocalizeStringPair(values[0], values[0])); // 1
+        go.AddOption(new Rhino.UI.LocalizeStringPair(values[1], values[1])); // 2
+        go.AddOption(new Rhino.UI.LocalizeStringPair(values[2], values[2])); // 3
+        go.AddOption(new Rhino.UI.LocalizeStringPair(values[3], values[3])); // 4
+        
+        GetResult res = go.Get();
+
+        if (res == GetResult.Option)
+          _optionIndex = go.OptionIndex() - 1;
+        else if (res != GetResult.Nothing)
+          return Result.Cancel;
+
+        switch (_optionIndex)
+        {
+          case 0: // HistoryWindow
+            RhinoApp.WriteLine(outputString);
+            break;
+
+          case 1: // File
+            {
+              string outputFileName = string.Empty;
+
+              Result cmd_rc = GetSaveFileName("Save file name", ref outputFileName);
+              if (cmd_rc != Result.Success)
+                return Result.Cancel;
+
+              outputFileName = outputFileName.Trim();
+              if (string.IsNullOrEmpty(outputFileName))
+                return Result.Nothing;
+
+              try
+              {
+                outputString = outputString.Replace("\n", "\r\n");
+                using (StreamWriter stream = new StreamWriter(outputFileName))
+                  stream.Write(outputString);
+              }
+              catch
+              {
+                RhinoApp.WriteLine("Unable to write to file.\n");
+                return Result.Failure;
+              }
+            }
+            break;
+
+          case 2: // Clipboard
+            outputString = outputString.Replace("\n", "\r\n");
+            Clipboard.SetText(outputString);
+            break;
+
+          case 3: // Dialog
+            Rhino.UI.Dialogs.ShowTextDialog(outputString, EnglishName);
+            break;
+        }
+      }
 
       return Result.Success;
+    }
+
+    /// <summary>
+    /// Prompts the user for the name of a file to open
+    /// </summary>
+    private Result GetOpenFileName(string prompt, ref string fileName)
+    {
+      Result rc = Result.Cancel;
+
+      if (string.IsNullOrEmpty(prompt))
+        prompt = "File name";
+
+      GetString gs = new GetString();
+      gs.SetCommandPrompt(prompt);
+      gs.AddOption(new Rhino.UI.LocalizeStringPair("Browse", "Browse"));
+
+      if (!string.IsNullOrEmpty(fileName))
+        gs.SetDefaultString(fileName);
+
+      GetResult res = gs.Get();
+
+      if (res == GetResult.String)
+      {
+        fileName = gs.StringResult();
+        rc = Result.Success;
+      }
+      else if (res == GetResult.Option)
+      {
+        OpenFileDialog fileDialog = new OpenFileDialog();
+        fileDialog.Filter = "RhinoScript Files (*.rvb)|*.rvb";
+        fileDialog.Title = "Select RhinoScript File";
+        if (fileDialog.ShowDialog() == DialogResult.OK)
+        {
+          fileName = fileDialog.FileName;
+          rc = Result.Success;
+        }
+      }
+
+      return rc;
+    }
+
+    /// <summary>
+    /// Prompts the user for the name of a file to save
+    /// </summary>
+    private Result GetSaveFileName(string prompt, ref string fileName)
+    {
+      Result rc = Result.Cancel;
+
+      if (string.IsNullOrEmpty(prompt))
+        prompt = "File name";
+
+      GetString gs = new GetString();
+      gs.SetCommandPrompt(prompt);
+      gs.AddOption(new Rhino.UI.LocalizeStringPair("Browse", "Browse"));
+
+      if (!string.IsNullOrEmpty(fileName))
+        gs.SetDefaultString(fileName);
+
+      GetResult res = gs.Get();
+
+      if (res == GetResult.String)
+      {
+        fileName = gs.StringResult();
+        rc = Result.Success;
+      }
+      else if (res == GetResult.Option)
+      {
+        SaveFileDialog fileDialog = new SaveFileDialog();
+        fileDialog.Filter = "Text Documents|*.txt";
+        fileDialog.Title = "Save As";
+        if (fileDialog.ShowDialog() == DialogResult.OK)
+        {
+          fileName = fileDialog.FileName;
+          rc = Result.Success;
+        }
+      }
+
+      return rc;
     }
 
     /// <summary>
